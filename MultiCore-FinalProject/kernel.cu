@@ -238,9 +238,13 @@ unordered_map<string, vector<Matrix>> read_from_file(string folder_name) {
 
 int main(int argc, char* argv[])
 {
+	auto t1 = chrono::high_resolution_clock::now();
 	auto matrices_of_files = read_from_file("data_in");
 	auto results = call_cuda(matrices_of_files);
 	write_to_file(results, "data_out");
+	auto t2 = chrono::high_resolution_clock::now();
 	cudaDeviceReset();
+	auto duration = chrono::duration_cast<chrono::milliseconds>(t2 - t1).count();
+	cout << "The program's execution time was: " << duration << " ms" << endl;
 	return 0;
 }

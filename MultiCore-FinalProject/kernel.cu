@@ -16,10 +16,15 @@
 
 using namespace std;
 
-vector<string> get_all_files_names_within_folder(string folder)
+struct Matrix {
+    double* A;
+    int m;
+};
+
+vector<string> get_all_files_names_within_folder(string folder_name)
 {
     vector<string> names;
-    string search_path = folder + "/*.txt*";
+    string search_path = folder_name + "/*.txt*";
     WIN32_FIND_DATA fd;
     HANDLE hFind = ::FindFirstFile(search_path.c_str(), &fd);
     if (hFind != INVALID_HANDLE_VALUE) {
@@ -35,7 +40,6 @@ vector<string> get_all_files_names_within_folder(string folder)
     return names;
 }
 
-
 void printMatrix(int m, int n, const double* A, int lda, const char* name)
 {
     for (int row = 0; row < m; row++) {
@@ -48,7 +52,7 @@ void printMatrix(int m, int n, const double* A, int lda, const char* name)
     }
 }
 
-void call_to_cusolver_with_stream(int m) {
+double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t &stream) {
 
     cusolverDnHandle_t cusolverH = NULL;
     cudaStream_t stream = NULL;
@@ -58,9 +62,10 @@ void call_to_cusolver_with_stream(int m) {
     cudaError_t cudaStat2 = cudaSuccess;
     cudaError_t cudaStat3 = cudaSuccess;
     cudaError_t cudaStat4 = cudaSuccess;
+    int m = matrix.m;
     int lda = m;
 
-    double* A = new double[lda * m] { 1.0, 4.0, 7.0, 2.0, 5.0, 8.0, 3.0, 6.0, 10.0, 1.0, 4.0, 7.0, 2.0, 5.0, 8.0, 4.0 };
+    double* A = matrix.A;
     double* LU = new double[lda * m];
     int* Ipiv = new int[m];      /* host copy of pivoting sequence */
     int info = 0;     /* host copy of error info */
@@ -80,8 +85,8 @@ void call_to_cusolver_with_stream(int m) {
     status = cusolverDnCreate(&cusolverH);
     assert(CUSOLVER_STATUS_SUCCESS == status);
 
-    cudaStat1 = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-    assert(cudaSuccess == cudaStat1);
+    //cudaStat1 = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    //assert(cudaSuccess == cudaStat1);
 
     status = cusolverDnSetStream(cusolverH, stream);
     assert(CUSOLVER_STATUS_SUCCESS == status);
@@ -140,6 +145,11 @@ void call_to_cusolver_with_stream(int m) {
     printMatrix(m, m, LU, lda, "LU");
     printf("=====\n");
 
+    double determinant = 1.0;
+#pragma omp parallel for shared(determinant, LU) reduction(*: determinant)
+    for (int i = 0; i < lda * lda; i+=lda) {
+        determinant *= LU[i];
+    }
 
     /* free resources */
     if (d_A) cudaFree(d_A);
@@ -147,26 +157,57 @@ void call_to_cusolver_with_stream(int m) {
     if (d_work) cudaFree(d_work);
 
     if (cusolverH) cusolverDnDestroy(cusolverH);
-    if (stream) cudaStreamDestroy(stream);
-
+    return determinant;
 }
 
+Matrix string_to_matrix(string matrix_str) {
+    int len = matrix_str.length();
+    // Assuming no \0 at its end.
+    int n = (len - 1) / 2;
+    double* A = new double[n];
+    for (int i = 0; i < len; i+=2) {
+        A[i / 2] = matrix_str[i] - '0';
+    }
+    Matrix matrix = {
+        A,
+        sqrt(n)
+    };
+    return matrix;
+}
 
+unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Matrix>> matrices_of_files) {
+    unordered_map<string, vector<double>> file_determinants;
+    for (auto const& x : matrices_of_files) {
+        cudaStream_t stream;
+        cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+        vector<double> dets_of_file;
+#pragma omp parallel for
+        for (Matrix matrix : x.second) {
+            double det = call_to_cusolver_with_stream(matrix, stream);
+#pragma omp critical
+            dets_of_file.push_back(det);
+        }
+        if (stream) cudaStreamDestroy(stream);
+        file_determinants[x.first] = dets_of_file;
+    }
+    return file_determinants;
+}
 
 int main(int argc, char* argv[])
 {
     vector<string> files = get_all_files_names_within_folder("in_all");
-    unordered_map<string, vector<string>> strings_of_files;
+    unordered_map<string, vector<Matrix>> matrices_of_files;
 #pragma omp parallel for
     for (string file_name : files) {
-        vector<string> file_strings;
+        vector<Matrix> file_matrices;
         ifstream input(file_name);
         for (string line; getline(input, line)) {
-            file_strings.push_back(line);
+            file_matrices.push_back(string_to_matrix(line));
         }
 #pragma omp critical
-        strings_of_files[file_name] = file_strings;
+        matrices_of_files[file_name] = file_matrices;
     }
+    
     call_to_cusolver_with_stream(4);
     cudaDeviceReset();
     return 0;

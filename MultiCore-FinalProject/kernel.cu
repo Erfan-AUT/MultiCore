@@ -63,22 +63,30 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 	cudaError_t cudaStat4 = cudaSuccess;
 	int m = matrix.m;
 	int lda = m;
+	int lm = m * lda;
 
 	double* A = matrix.A;
-	double* LU = new double[lda * m];
+	double* LU = new double[lm];
 	int* Ipiv = new int[m];      /* host copy of pivoting sequence */
 	int info = 0;     /* host copy of error info */
 
 	double* d_A = NULL; /* device copy of A */
+	int* d_Ipiv = NULL; /* pivoting sequence */
 	int* d_info = NULL; /* error info */
 	int  lwork = 0;     /* size of workspace */
 	double* d_work = NULL; /* device workspace for getrf */
 
-	//printf("pivot is off: compute A = L*U (not numerically stable)\n");
+	const bool pivot_on = 1;
+	/*if (pivot_on) {
+		printf("pivot is on : compute P*A = L*U \n");
+	}
+	else {
+		printf("pivot is off: compute A = L*U (not numerically stable)\n");
+	}*/
 
-	//printf("A = \n");
-	//printMatrix(m, m, A, lda, "A");
-	//printf("=====\n");
+	/*printf("A = \n");
+	printMatrix(m, m, A, lda, "A");
+	printf("=====\n");*/
 
 	/* step 1: create cusolver handle, bind a stream */
 	status = cusolverDnCreate(&cusolverH);
@@ -92,15 +100,14 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 
 	/* step 2: copy A to device */
 	cudaStat1 = cudaMalloc((void**)&d_A, sizeof(double) * lda * m);
+	cudaStat2 = cudaMalloc((void**)&d_Ipiv, sizeof(int) * m);
 	cudaStat4 = cudaMalloc((void**)&d_info, sizeof(int));
 	assert(cudaSuccess == cudaStat1);
 	assert(cudaSuccess == cudaStat2);
-	assert(cudaSuccess == cudaStat3);
 	assert(cudaSuccess == cudaStat4);
 
 	cudaStat1 = cudaMemcpy(d_A, A, sizeof(double) * lda * m, cudaMemcpyHostToDevice);
 	assert(cudaSuccess == cudaStat1);
-	assert(cudaSuccess == cudaStat2);
 
 	/* step 3: query working space of getrf */
 	status = cusolverDnDgetrf_bufferSize(
@@ -124,7 +131,7 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 		d_A,
 		lda,
 		d_work,
-		NULL,
+		d_Ipiv,
 		d_info);
 	cudaStat1 = cudaDeviceSynchronize();
 	assert(CUSOLVER_STATUS_SUCCESS == status);
@@ -140,14 +147,14 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 		//printf("%d-th parameter is wrong \n", -info);
 		exit(1);
 	}
-	//printf("L and U = (matlab base-1)\n");
-	//printMatrix(m, m, LU, lda, "LU");
-	//printf("=====\n");
+	/*printf("L and U = (matlab base-1)\n");
+	printMatrix(m, m, LU, lda, "LU");
+	printf("=====\n");*/
 
 	double determinant = 1.0;
 #pragma omp parallel for reduction(*: determinant)
-	for (int i = 0; i < lda * lda; i += lda) {
-		determinant *= LU[i];
+	for (int i = 0; i < m; i++) {
+		determinant *= LU[i * m + i];
 	}
 
 	/* free resources */
@@ -162,7 +169,7 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 Matrix string_to_matrix(string matrix_str) {
 	int len = matrix_str.length();
 	// Assuming no \0 at its end.
-	int n = (len - 1) / 2;
+	int n = (len + 1) / 2;
 	double* A = new double[n];
 	for (int i = 0; i < len; i += 2) {
 		A[i / 2] = matrix_str[i] - '0';
@@ -171,10 +178,11 @@ Matrix string_to_matrix(string matrix_str) {
 		A,
 		sqrt(n)
 	};
+	//cout << "m is: " << sqrt(n) << endl;
 	return matrix;
 }
 
-void write_to_file(unordered_map<string, vector<double>> &results, string folder_name) {
+void write_to_file(unordered_map<string, vector<double>>& results, string folder_name) {
 	vector<string> keys;
 	for (auto item = results.begin(); item != results.end(); ++item) {
 		keys.push_back(item->first);
@@ -188,7 +196,7 @@ void write_to_file(unordered_map<string, vector<double>> &results, string folder
 		ofstream file(full_file_name);
 		for (int j = 0; j < file_results.size(); j++) {
 			double result = file_results.at(j);
-			if (result < 0.5)
+			if ((result < 0.5) && (result > 0))
 				result = 0;
 			file << result << endl;
 		}
@@ -196,7 +204,7 @@ void write_to_file(unordered_map<string, vector<double>> &results, string folder
 	}
 }
 
-unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Matrix>> &matrices_of_files) {
+unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Matrix>>& matrices_of_files) {
 	unordered_map<string, vector<double>> file_determinants;
 	for (auto const& x : matrices_of_files) {
 		cudaStream_t stream;
@@ -220,7 +228,7 @@ unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Mat
 unordered_map<string, vector<Matrix>> read_from_file(string folder_name) {
 	unordered_map<string, vector<Matrix>> matrices_of_files;
 	vector<string> files = get_all_files_names_within_folder(folder_name);
-//#pragma omp parallel for
+#pragma omp parallel for
 	for (int i = 0; i < files.size(); i++) {
 		string file_name = files.at(i);
 		vector<Matrix> file_matrices;
@@ -230,7 +238,7 @@ unordered_map<string, vector<Matrix>> read_from_file(string folder_name) {
 				file_matrices.push_back(string_to_matrix(line));
 			}
 		}
-//#pragma omp critical
+#pragma omp critical
 		matrices_of_files[file_name] = file_matrices;
 	}
 	return matrices_of_files;

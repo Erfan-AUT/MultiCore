@@ -15,11 +15,13 @@
 
 using namespace std;
 
+// A square m*m matrix implemented as a dynamic "double" array and its m.
 struct Matrix {
 	double* A;
 	int m;
 };
 
+// To find all the input files' names.
 vector<string> get_all_files_names_within_folder(string folder_name)
 {
 	vector<string> names;
@@ -40,6 +42,7 @@ vector<string> get_all_files_names_within_folder(string folder_name)
 	return names;
 }
 
+// Prints matrix (Used solely for debugging purposes)
 void printMatrix(int m, int n, const double* A, int lda, const char* name)
 {
 	for (int row = 0; row < m; row++) {
@@ -52,6 +55,7 @@ void printMatrix(int m, int n, const double* A, int lda, const char* name)
 	}
 }
 
+// Gets a matrix and its corresponding stream and computes its determinant.
 double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 
 	cusolverDnHandle_t cusolverH = NULL;
@@ -139,9 +143,11 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 
 	cudaStat2 = cudaMemcpy(LU, d_A, sizeof(double) * lda * m, cudaMemcpyDeviceToHost);
 	cudaStat3 = cudaMemcpy(&info, d_info, sizeof(int), cudaMemcpyDeviceToHost);
+	cudaStat4 = cudaMemcpy(Ipiv, d_Ipiv, sizeof(int) * m, cudaMemcpyDeviceToHost);
 	assert(cudaSuccess == cudaStat1);
 	assert(cudaSuccess == cudaStat2);
 	assert(cudaSuccess == cudaStat3);
+	assert(cudaSuccess == cudaStat4);
 
 	if (0 > info) {
 		//printf("%d-th parameter is wrong \n", -info);
@@ -151,10 +157,19 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 	printMatrix(m, m, LU, lda, "LU");
 	printf("=====\n");*/
 
+	// Calculating the determinant using OpenMP for acceleration.
+	int swaps = 0;
 	double determinant = 1.0;
-#pragma omp parallel for reduction(*: determinant)
+//#pragma omp parallel for reduction(*: determinant)
 	for (int i = 0; i < m; i++) {
+		if (Ipiv[i] != i + 1) {
+//#pragma omp critical
+			++swaps;
+		}
 		determinant *= LU[i * m + i];
+	}
+	if (swaps % 2 == 1) {
+		determinant *= -1;
 	}
 
 	/* free resources */
@@ -166,6 +181,7 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 	return determinant;
 }
 
+// Converts a string read from a file into a Matrix struct.
 Matrix string_to_matrix(string matrix_str) {
 	int len = matrix_str.length();
 	// Assuming no \0 at its end.
@@ -182,7 +198,8 @@ Matrix string_to_matrix(string matrix_str) {
 	return matrix;
 }
 
-void write_to_file(unordered_map<string, vector<double>>& results, string folder_name) {
+// Asynchronous write to all the found files.
+void write_to_file(unordered_map<string, unordered_map<int, double>>& results, string folder_name) {
 	vector<string> keys;
 	for (auto item = results.begin(); item != results.end(); ++item) {
 		keys.push_back(item->first);
@@ -191,11 +208,13 @@ void write_to_file(unordered_map<string, vector<double>>& results, string folder
 #pragma omp parallel for 
 	for (int i = 0; i < keys.size(); i++) {
 		string file_name = keys.at(i);
-		vector<double> file_results = results.at(file_name);
+		unordered_map<int, double> file_results = results.at(file_name);
 		auto full_file_name = folder_name + '\\' + file_name;
 		ofstream file(full_file_name);
 		for (int j = 0; j < file_results.size(); j++) {
-			double result = file_results.at(j);
+			double result = file_results[j];
+			// Because the matrix is all integers, the answer should also be an integer,
+			// but since the library gives the answer as an array of doubles, we round the small values down to zero.
 			if ((result < 0.5) && (result > 0))
 				result = 0;
 			file << result << endl;
@@ -204,18 +223,23 @@ void write_to_file(unordered_map<string, vector<double>>& results, string folder
 	}
 }
 
-unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Matrix>>& matrices_of_files) {
-	unordered_map<string, vector<double>> file_determinants;
+// Creates a stream for each matrix and passes it to call_to_cusolver_with_stream for computation.
+unordered_map<string, unordered_map<int, double>> call_cuda(unordered_map<string, vector<Matrix>>& matrices_of_files) {
+	unordered_map<string, unordered_map<int, double>> file_determinants;
+	// Files are processed serially.
 	for (auto const& x : matrices_of_files) {
 		cudaStream_t stream;
 		cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-		vector<double> dets_of_file;
+		// Save it in a HashMap to avoid inconsistencies.
+		unordered_map<int, double> dets_of_file;
+		// Matrices in one file are processed in parallel.
 #pragma omp parallel for
 		for (int i = 0; i < x.second.size(); i++) {
 			Matrix matrix = x.second.at(i);
 			double det = call_to_cusolver_with_stream(matrix, stream);
+			//
 #pragma omp critical
-			dets_of_file.push_back(det);
+			dets_of_file[i] = det;
 		}
 		if (stream) cudaStreamDestroy(stream);
 		string file_name = x.first;
@@ -225,6 +249,7 @@ unordered_map<string, vector<double>> call_cuda(unordered_map<string, vector<Mat
 	return file_determinants;
 }
 
+// Asynchronous read from all the found files.
 unordered_map<string, vector<Matrix>> read_from_file(string folder_name) {
 	unordered_map<string, vector<Matrix>> matrices_of_files;
 	vector<string> files = get_all_files_names_within_folder(folder_name);

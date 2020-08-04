@@ -12,6 +12,7 @@
 #include <omp.h>
 #include <string>
 #include <chrono>
+#include <sstream>
 
 using namespace std;
 
@@ -160,10 +161,10 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 	// Calculating the determinant using OpenMP for acceleration.
 	int swaps = 0;
 	double determinant = 1.0;
-//#pragma omp parallel for reduction(*: determinant)
+#pragma omp parallel for reduction(*: determinant)
 	for (int i = 0; i < m; i++) {
 		if (Ipiv[i] != i + 1) {
-//#pragma omp critical
+#pragma omp critical
 			++swaps;
 		}
 		determinant *= LU[i * m + i];
@@ -183,12 +184,16 @@ double call_to_cusolver_with_stream(Matrix matrix, cudaStream_t& stream) {
 
 // Converts a string read from a file into a Matrix struct.
 Matrix string_to_matrix(string matrix_str) {
-	int len = matrix_str.length();
-	// Assuming no \0 at its end.
-	int n = (len + 1) / 2;
+	stringstream ss(matrix_str);
+	vector<double> doubles;
+	double buf;
+	while (ss >> buf) {
+		doubles.push_back(buf);
+	}
+	int n = doubles.size();
 	double* A = new double[n];
-	for (int i = 0; i < len; i += 2) {
-		A[i / 2] = matrix_str[i] - '0';
+	for (int i = 0; i < n; i++) {
+		A[i] = doubles[i];
 	}
 	Matrix matrix = {
 		A,

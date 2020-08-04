@@ -17,7 +17,7 @@ for i in range(file_count):
             matrix_size = random.choice(matrix_sizes)
             sample_str = ""
             for k in range(matrix_size ** 2):
-                element = random.randint(0, 9)
+                element = random.uniform(0.0, 10.0)
                 sample_str += str(element) + " "
             sample_str = sample_str.rstrip()
             file.write(sample_str + "\n\n")

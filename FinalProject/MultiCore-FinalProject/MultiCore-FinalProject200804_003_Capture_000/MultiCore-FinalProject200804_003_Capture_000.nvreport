@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<AnalysisReport Version="1.0">
+  <ProcessId>7756</ProcessId>
+  <ReportCreationTime>2020-08-04T12:47:42.7117468+04:30</ReportCreationTime>
+  <ReportDirectory>c:\temp\MultiCore-FinalProject200804_003\MultiCore-FinalProject200804_003_Capture_000</ReportDirectory>
+  <ReportFile>c:\temp\MultiCore-FinalProject200804_003\MultiCore-FinalProject200804_003_Capture_000\MultiCore-FinalProject200804_003_Capture_000.nvreport</ReportFile>
+  <CaptureStartQpcTimestamp>6929112712037</CaptureStartQpcTimestamp>
+  <CaptureStartNveTimestamp>499801943204369</CaptureStartNveTimestamp>
+  <CaptureStartNveFrequency>2904000000</CaptureStartNveFrequency>
+  <CaptureEndQpcTimestamp>6932961625340</CaptureEndQpcTimestamp>
+  <CaptureEndNveTimestamp>500919666500028</CaptureEndNveTimestamp>
+  <CaptureStartRdtscTimestamp>499801943204429</CaptureStartRdtscTimestamp>
+  <CaptureEndRdtscTimestamp>500919666500461</CaptureEndRdtscTimestamp>
+  <CaptureStartFileTimeTimestamp>132410026628777472</CaptureStartFileTimeTimestamp>
+  <CaptureEndFileTimeTimestamp>132410030477687312</CaptureEndFileTimeTimestamp>
+</AnalysisReport>
